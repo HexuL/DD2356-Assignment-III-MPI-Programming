@@ -7,63 +7,6 @@
 
 #define TILE_SIZE (matrix_size / p)  
 
-double* allocate_matrix(int dim) {
-    double* matrix = (double*)malloc(dim * dim * sizeof(double));
-    return matrix;
-}
-
-void multiply_accumalate(double* A, double* B, double* C, int size) {
-    for (int x = 0; x < size; x++) {
-        for (int y = 0; y < size; y++) {
-            for (int z = 0; z < size; z++) {
-                C[x * size + y] += A[x * size + z] * B[z * size + y];
-            }
-        }
-    }
-}
-
-void distribute_blocks(double* A, double* B, double* local_A, double* local_B, int matrix_size, int rank, int processes, int block_size, MPI_Comm grid_comm) {
-
-    MPI_Datatype row_type, block_type;
-
-    MPI_Type_contiguous(block_size, MPI_DOUBLE, &row_type);
-    MPI_Type_commit(&row_type);
-    MPI_Type_vector(block_size, 1, matrix_size/block_size, row_type, &block_type);
-    MPI_Type_create_resized(block_type, 0, sizeof(double) * block_size, &block_type);
-    MPI_Type_commit(&block_type);
-
-    int* sendcounts = NULL;
-    int* displacements = NULL;
-
-    if (rank == 0) {
-        int coords[2];
-        sendcounts = malloc(processes * sizeof(int));
-        displacements = malloc(processes * sizeof(int));
-
-        for (int i = 0; i < processes; i++) {
-            sendcounts[i] = 1; 
-            MPI_Cart_coords(grid_comm, i, 2, coords);
-
-            displacements[i] = coords[0] * matrix_size + coords[1]; 
-        }
-    }
-
-
-    MPI_Scatterv(A, sendcounts, displacements, block_type, local_A, block_size * block_size, MPI_DOUBLE, 0, grid_comm);
-    MPI_Scatterv(B, sendcounts, displacements, block_type, local_B, block_size * block_size, MPI_DOUBLE, 0, grid_comm);
-
-    if (rank == 0) {
-        free(sendcounts);
-        free(displacements);
-    }
-
-    MPI_Type_free(&row_type);
-    MPI_Type_free(&block_type);
-}
-
-void gather_results(double *local_C, double *C_full, int tile_size, MPI_Comm grid_comm) {
-    MPI_Gather(local_C, tile_size * tile_size, MPI_DOUBLE, C_full, tile_size * tile_size, MPI_DOUBLE, 0, grid_comm);
-}
 
 void read_input_matrices(double** A, double** B, int* matrix_size) {
     *matrix_size = 16;
@@ -106,8 +49,17 @@ void read_input_matrices(double** A, double** B, int* matrix_size) {
         59, 2, 1, 40, 25, 59, 37, 100, 70, 7, 4, 99, 41, 61, 34
     };
 
-    double* temp_A = allocate_matrix(*matrix_size);
-    double* temp_B = allocate_matrix(*matrix_size);
+
+int dim = *matrix_size;  
+
+double* temp_A = (double*)malloc(dim * dim * sizeof(double));
+if (temp_A == NULL) {
+}
+
+double* temp_B = (double*)malloc(dim * dim * sizeof(double));
+if (temp_B == NULL) {
+    free(temp_A);  
+}
 
     for (int i = 0; i < (*matrix_size) * (*matrix_size); i++) {
         temp_A[i] = A_data[i];
@@ -116,17 +68,6 @@ void read_input_matrices(double** A, double** B, int* matrix_size) {
 
     *A = temp_A;
     *B = temp_B;
-}
-
-void print_result_matrix(double *matrix, int matrix_size) {
-    printf("Result matrix:\n");
-    for (int i = 0; i < matrix_size; i++) {
-        for (int j = 0; j < matrix_size; j++) {
-            printf("%6.2f ", matrix[i * matrix_size + j]);
-        }
-        printf("\n");
-    }
-    printf("\n");
 }
 
 int main(int argc, char** argv) {
@@ -149,7 +90,6 @@ int main(int argc, char** argv) {
         if (rank == 0) {
             printf("[ERROR] The number of processes must be a integer square, is %i.", p);
         }
-        // quit
         MPI_Finalize();
         return EXIT_FAILURE;
     }
@@ -181,8 +121,8 @@ int main(int argc, char** argv) {
 
     MPI_Bcast(&matrix_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-    local_A = allocate_matrix(TILE_SIZE);
-    local_B = allocate_matrix(TILE_SIZE);
+local_A = (double*)malloc(TILE_SIZE * TILE_SIZE * sizeof(double));
+local_B = (double*)malloc(TILE_SIZE * TILE_SIZE * sizeof(double));
 
     int ndims = 2;           
     int dims[2] = {p, p};        
@@ -201,44 +141,92 @@ int main(int argc, char** argv) {
     MPI_Barrier(row_comm);
     MPI_Barrier(col_comm);
 
-    double* local_C = allocate_matrix(TILE_SIZE);
+ double* local_C = (double*)malloc(TILE_SIZE * TILE_SIZE * sizeof(double));
     double* C_full = NULL;
     if (rank == 0) {
-        C_full = allocate_matrix(matrix_size);
+         C_full = (double*)malloc(matrix_size * matrix_size * sizeof(double));
     }
 
-    distribute_blocks(A, B, local_A, local_B, matrix_size, rank, processes, TILE_SIZE, grid_comm);
+     MPI_Datatype row_type, block_type;
+    MPI_Type_contiguous(TILE_SIZE, MPI_DOUBLE, &row_type);
+    MPI_Type_commit(&row_type);
+    MPI_Type_vector(TILE_SIZE, 1, matrix_size / TILE_SIZE, row_type, &block_type);
+    MPI_Type_create_resized(block_type, 0, sizeof(double) * TILE_SIZE, &block_type);
+    MPI_Type_commit(&block_type);
+
+    // 计算 sendcounts 和 displacements
+    int* sendcounts = NULL;
+    int* displacements = NULL;
+    if (rank == 0) {
+        int coords[2];
+        sendcounts = malloc(processes * sizeof(int));
+        displacements = malloc(processes * sizeof(int));
+
+        for (int i = 0; i < processes; i++) {
+            sendcounts[i] = 1; 
+            MPI_Cart_coords(grid_comm, i, 2, coords);
+            displacements[i] = coords[0] * matrix_size + coords[1]; 
+        }
+    }
+
+    // 分发数据块
+    MPI_Scatterv(A, sendcounts, displacements, block_type, local_A, TILE_SIZE * TILE_SIZE, MPI_DOUBLE, 0, grid_comm);
+    MPI_Scatterv(B, sendcounts, displacements, block_type, local_B, TILE_SIZE * TILE_SIZE, MPI_DOUBLE, 0, grid_comm);
+
+    // 释放内存
+    if (rank == 0) {
+        free(sendcounts);
+        free(displacements);
+    }
+
+    // 释放 MPI_Datatype
+    MPI_Type_free(&row_type);
+    MPI_Type_free(&block_type);
 
     int source, dest;
     source = (grid_coords[0] + 1) % p;
     dest = (grid_coords[0] + p - 1) % p;
 
-    double* temp_A = allocate_matrix(TILE_SIZE);
+    double* temp_A = (double*)malloc(TILE_SIZE * TILE_SIZE * sizeof(double));
 
     for (int step = 0; step < p; step++) {
 
         int root = (grid_coords[0] + step) % p;
 
-        if (root == grid_coords[1]) {
-            MPI_Bcast(local_A, TILE_SIZE * TILE_SIZE, MPI_DOUBLE, root, row_comm);
-            multiply_accumalate(local_A, local_B, local_C, TILE_SIZE);
+if (root == grid_coords[1]) {
+    MPI_Bcast(local_A, TILE_SIZE * TILE_SIZE, MPI_DOUBLE, root, row_comm);
+    for (int x = 0; x < TILE_SIZE; x++) {
+        for (int y = 0; y < TILE_SIZE; y++) {
+            for (int z = 0; z < TILE_SIZE; z++) {
+                local_C[x * TILE_SIZE + y] += local_A[x * TILE_SIZE + z] * local_B[z * TILE_SIZE + y];
+            }
         }
-        else {
-            MPI_Bcast(temp_A, TILE_SIZE * TILE_SIZE, MPI_DOUBLE, root, row_comm);
-            multiply_accumalate(temp_A, local_B, local_C, TILE_SIZE);
+    }
+}
+else {
+    MPI_Bcast(temp_A, TILE_SIZE * TILE_SIZE, MPI_DOUBLE, root, row_comm);
+    for (int x = 0; x < TILE_SIZE; x++) {
+        for (int y = 0; y < TILE_SIZE; y++) {
+            for (int z = 0; z < TILE_SIZE; z++) {
+                local_C[x * TILE_SIZE + y] += temp_A[x * TILE_SIZE + z] * local_B[z * TILE_SIZE + y];
+            }
         }
+    }
+}
+
 
         MPI_Sendrecv_replace(local_B, TILE_SIZE * TILE_SIZE, MPI_DOUBLE, dest, 0, source, 0, col_comm, MPI_STATUS_IGNORE);
     }
 
     free(temp_A);
 
-    gather_results(local_C, C_full, TILE_SIZE, grid_comm);
+    MPI_Gather(local_C, TILE_SIZE * TILE_SIZE, MPI_DOUBLE, C_full, TILE_SIZE * TILE_SIZE, MPI_DOUBLE, 0, grid_comm);
+
 
     if (rank == 0) {
         end_time = MPI_Wtime();
 
-        double* C_fixed = allocate_matrix(matrix_size);
+        double* C_fixed = (double*)malloc(matrix_size * matrix_size * sizeof(double));
         for (int i = 0; i < p; i++) {
             for (int j = 0; j < p; j++) {
                 int block_start = (i * p + j) * TILE_SIZE * TILE_SIZE;
@@ -248,7 +236,14 @@ int main(int argc, char** argv) {
             }
         }
 
-        print_result_matrix(C_fixed, matrix_size); 
+         printf("Result matrix:\n");
+    for (int i = 0; i < matrix_size; i++) {
+        for (int j = 0; j < matrix_size; j++) {
+            printf("%6.2f ", C_fixed[i * matrix_size + j]);
+        }
+        printf("\n");
+    }
+    printf("\n");
         free(C_fixed);
 
         if (rank == 0) {
