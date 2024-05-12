@@ -57,8 +57,7 @@ if (temp_A == NULL) {
 }
 
 double* temp_B = (double*)malloc(dim * dim * sizeof(double));
-if (temp_B == NULL) {
-    free(temp_A);  
+if (temp_B == NULL) { 
 }
 
     for (int i = 0; i < (*matrix_size) * (*matrix_size); i++) {
