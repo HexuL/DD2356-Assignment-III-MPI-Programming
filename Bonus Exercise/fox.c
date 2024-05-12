@@ -50,15 +50,11 @@ void read_input_matrices(double** A, double** B, int* matrix_size) {
     };
 
 
-int dim = *matrix_size;  
+int ms = *matrix_size;  
 
-double* temp_A = (double*)malloc(dim * dim * sizeof(double));
-if (temp_A == NULL) {
-}
+double* temp_A = (double*)malloc(ms * ms * sizeof(double));
+double* temp_B = (double*)malloc(ms * ms * sizeof(double));
 
-double* temp_B = (double*)malloc(dim * dim * sizeof(double));
-if (temp_B == NULL) { 
-}
 
     for (int i = 0; i < (*matrix_size) * (*matrix_size); i++) {
         temp_A[i] = A_data[i];
